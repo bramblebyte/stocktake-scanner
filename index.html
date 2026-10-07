@@ -78,9 +78,14 @@ label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
 
   <div class="card">
     <div class="row" style="margin:0 0 6px">
-      <button id="export">Export to Excel</button>
+      <button id="export">Download Excel</button>
+      <button class="ghost" id="share" style="display:none">Share…</button>
+    </div>
+    <div class="row" style="margin:0 0 6px">
+      <button class="ghost" id="copy">Copy for Excel</button>
       <button class="danger" id="clear">Clear all</button>
     </div>
+    <div id="xmsg" style="font-size:14px;margin:6px 2px;min-height:20px"></div>
     <div id="list"></div>
   </div>
 </div>
@@ -10366,17 +10371,55 @@ function buildXlsx(){
     {name:'xl/worksheets/sheet1.xml', data: X+'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="10" customWidth="1"/><col min="3" max="3" width="24" customWidth="1"/><col min="4" max="5" width="20" customWidth="1"/></cols><sheetData>'+sheetRows+'</sheetData></worksheet>'}
   ]);
 }
+function xsay(m, bad){ const x = $('xmsg'); x.textContent = m; x.style.color = bad ? 'var(--danger)' : 'var(--accent)'; }
+function fname(){ const d = new Date(), p = n => String(n).padStart(2,'0'); return 'stocktake_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.xlsx'; }
+function doDownload(blob, name){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.style.display='none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 60000);
+}
 $('export').onclick = () => {
-  if (!items.length){ say('Nothing to export yet.'); return; }
-  const blob = buildXlsx(), d = new Date(), p = n => String(n).padStart(2,'0');
-  const name = 'stocktake_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+'.xlsx';
-  const file = new File([blob], name, {type: blob.type});
-  if (navigator.canShare && navigator.canShare({files:[file]})){
-    navigator.share({files:[file], title:'Stocktake'}).catch(()=>{});
-  } else {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  if (!items.length){ xsay('Nothing to export yet.', true); return; }
+  try {
+    const name = fname(); doDownload(buildXlsx(), name);
+    xsay('Saved ' + name + ' — check your Downloads / Files app. If nothing appears, use Share or Copy for Excel.');
+  } catch(err){ xsay('Export failed: ' + (err && err.message || err), true); }
+};
+(function(){
+  try {
+    const probe = new File([new Blob(['x'])], 'a.xlsx', {type:'application/octet-stream'});
+    if (navigator.share && navigator.canShare && navigator.canShare({files:[probe]})) $('share').style.display = '';
+  } catch(e){}
+})();
+$('share').onclick = async () => {
+  if (!items.length){ xsay('Nothing to export yet.', true); return; }
+  try {
+    const blob = buildXlsx(), name = fname();
+    const file = new File([blob], name, {type: blob.type});
+    await navigator.share({files:[file], title:'Stocktake'});
+    xsay('Shared.');
+  } catch(err){
+    if (err && err.name === 'AbortError') { xsay('Share cancelled.'); return; }
+    xsay('Share not supported for this file here (' + (err && err.name || 'error') + '). Use Download Excel or Copy for Excel.', true);
   }
+};
+$('copy').onclick = async () => {
+  if (!items.length){ xsay('Nothing to copy yet.', true); return; }
+  const stamp = t => new Date(t).toLocaleString();
+  const rows = [['Batch number','Quantity','Location','First scanned','Last scanned'], ...items.slice().reverse().map(i => [i.batch, i.qty, i.location, stamp(i.first), stamp(i.last)])];
+  const text = rows.map(r => r.map(v => String(v).replace(/[\t\r\n]+/g,' ')).join('\t')).join('\n');
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+    else throw new Error('no clipboard');
+  } catch(e){
+    const ta = document.createElement('textarea'); ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch(_){}
+    ta.remove();
+    if (!ok){ xsay('Could not copy automatically.', true); return; }
+  }
+  xsay('Copied ' + items.length + ' rows. Paste straight into Excel or Sheets.');
 };
 
 render();
